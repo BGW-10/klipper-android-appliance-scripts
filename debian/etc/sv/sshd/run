@@ -1,0 +1,7 @@
+#!/bin/sh
+
+mkdir -p /run/sshd
+chown root:root /run/sshd
+chmod 0755 /run/sshd
+
+exec /usr/sbin/sshd -D -e
