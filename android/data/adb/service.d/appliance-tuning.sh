@@ -84,38 +84,25 @@ done
 #
 disable_wifi_power_save
 
-#
-# Reapply Wi-Fi power-save setting after link events.
-#
-if command -v ip >/dev/null 2>&1; then
-    (
-        ip monitor link dev wlan0 2>/dev/null |
+# Monitor wlan0 and reapply Wi-Fi power-save setting when it reaches state UP.
+(
+    while true; do
+        log "Starting wlan0 link monitor"
+
+        /system/bin/ip monitor link dev wlan0 2>&1 |
         while IFS= read -r event; do
-            log "Wi-Fi link event: $event"
-
-            # Retry asynchronously so new link events aren't missed.
-            (
-                attempt=1
-                while [ "$attempt" -le 10 ]; do
-                    sleep 1
-
-                    if [ -d /sys/class/net/wlan0 ]; then
-                        link_state=$("$IW" dev wlan0 link 2>/dev/null)
-
-                        case "$link_state" in
-                            "Connected to "*)
-                                if disable_wifi_power_save; then
-                                    break
-                                fi
-                                ;;
-                        esac
-                    fi
-
-                    attempt=$((attempt + 1))
-                done
-            ) &
+            case "$event" in
+                *"state UP"*)
+                    log "wlan0 reached state UP; checking Wi-Fi power save"
+                    sleep 2
+                    disable_wifi_power_save
+                    ;;
+            esac
         done
-    ) &
-fi
+
+        log "Wi-Fi link monitor exited; restarting in 5 seconds"
+        sleep 5
+    done
+) &
 
 log "Appliance tuning complete"
