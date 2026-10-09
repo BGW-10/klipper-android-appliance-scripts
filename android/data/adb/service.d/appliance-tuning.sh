@@ -14,10 +14,25 @@ log() {
 }
 
 disable_wifi_power_save() {
-    if [ -x "$IW" ] && [ -d /sys/class/net/wlan0 ]; then
-        if "$IW" dev wlan0 set power_save off >/dev/null 2>&1; then
-            log "Wi-Fi power save disabled"
-        fi
+    if [ ! -x "$IW" ] || [ ! -d /sys/class/net/wlan0 ]; then
+        return 1
+    fi
+
+    if "$IW" dev wlan0 set power_save off >/dev/null 2>&1; then
+        state=$("$IW" dev wlan0 get power_save 2>/dev/null)
+        case "$state" in
+            *"Power save: off"*)
+                log "Wi-Fi power save disabled"
+                return 0
+                ;;
+            *)
+                log "WARNING: Wi-Fi power save state: ${state:-unknown}"
+                return 1
+                ;;
+        esac
+    else
+        log "WARNING: Failed to set Wi-Fi power save OFF"
+        return 1
     fi
 }
 
@@ -70,17 +85,35 @@ done
 disable_wifi_power_save
 
 #
-# Reapply Wi-Fi setting only when wlan0 changes state.
+# Reapply Wi-Fi power-save setting after link events.
 #
 if command -v ip >/dev/null 2>&1; then
     (
-        ip monitor link dev wlan0 2>/dev/null | while read -r event; do
+        ip monitor link dev wlan0 2>/dev/null |
+        while IFS= read -r event; do
             log "Wi-Fi link event: $event"
 
-            # Give Android/driver initialization a moment to settle.
-            sleep 1
+            # Retry asynchronously so new link events aren't missed.
+            (
+                attempt=1
+                while [ "$attempt" -le 10 ]; do
+                    sleep 1
 
-            disable_wifi_power_save
+                    if [ -d /sys/class/net/wlan0 ]; then
+                        link_state=$("$IW" dev wlan0 link 2>/dev/null)
+
+                        case "$link_state" in
+                            "Connected to "*)
+                                if disable_wifi_power_save; then
+                                    break
+                                fi
+                                ;;
+                        esac
+                    fi
+
+                    attempt=$((attempt + 1))
+                done
+            ) &
         done
     ) &
 fi
